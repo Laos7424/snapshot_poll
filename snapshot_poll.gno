@@ -1,10 +1,9 @@
 package snapshot_poll
 
 import (
+	"std"
 	"strconv"
 	"strings"
-
-	"gno.land/p/nt/ufmt/v0"
 )
 
 // Poll represents a single yes/no/abstain poll with a deadline.
@@ -12,7 +11,7 @@ type Poll struct {
 	ID       int
 	Creator  string
 	Question string
-	Deadline int64 // Unix timestamp
+	Deadline int64 // block height or Unix timestamp
 	Yes      []string
 	No       []string
 	Abstain  []string
@@ -20,11 +19,28 @@ type Poll struct {
 }
 
 var (
-	polls   []*Poll
-	nextID  int
+	polls  []*Poll
+	nextID int
 )
 
-// hasVoted checks if an address has already voted in a poll.
+func init() {
+	polls = []*Poll{}
+	nextID = 0
+}
+
+func caller() string {
+	return string(std.PreviousRealm().Address())
+}
+
+// ---------- helpers ----------
+
+func mustGetPoll(pollID int) *Poll {
+	if pollID < 0 || pollID >= len(polls) {
+		panic("poll not found: " + strconv.Itoa(pollID))
+	}
+	return polls[pollID]
+}
+
 func hasVoted(p *Poll, voter string) bool {
 	for _, v := range p.Yes {
 		if v == voter {
@@ -44,42 +60,45 @@ func hasVoted(p *Poll, voter string) bool {
 	return false
 }
 
-// CreatePoll creates a new poll with a question and Unix deadline timestamp.
-// Returns the poll ID as a string.
-func CreatePoll(_ realm, creator, question string, deadline int64) string {
+// ---------- write operations ----------
+
+// CreatePoll creates a new poll. The caller becomes the creator.
+func CreatePoll(_ realm, question string, deadline int64) string {
 	if strings.TrimSpace(question) == "" {
-		return "error: question cannot be empty"
+		panic("question must not be empty")
 	}
 	if deadline <= 0 {
-		return "error: deadline must be a positive Unix timestamp"
+		panic("deadline must be positive")
 	}
-	p := &Poll{
-		ID:       nextID,
-		Creator:  creator,
+
+	id := nextID
+	nextID++
+
+	polls = append(polls, &Poll{
+		ID:       id,
+		Creator:  caller(),
 		Question: question,
 		Deadline: deadline,
-	}
-	polls = append(polls, p)
-	nextID++
-	return ufmt.Sprintf("poll created with id=%d", p.ID)
+	})
+	return "poll_" + strconv.Itoa(id)
 }
 
 // Vote casts a vote on a poll. Choice must be "yes", "no", or "abstain".
 // Each address may only vote once per poll.
-func Vote(_ realm, pollID int, voter, choice string, now int64) string {
-	if pollID < 0 || pollID >= len(polls) {
-		return "error: poll not found"
-	}
-	p := polls[pollID]
+func Vote(_ realm, pollID int, choice string, now int64) {
+	p := mustGetPoll(pollID)
 	if p.Closed {
-		return "error: poll is closed"
+		panic("poll is closed")
 	}
 	if now > p.Deadline {
-		return "error: poll deadline has passed"
+		panic("poll deadline has passed")
 	}
+
+	voter := caller()
 	if hasVoted(p, voter) {
-		return "error: address has already voted"
+		panic("already voted")
 	}
+
 	switch strings.ToLower(choice) {
 	case "yes":
 		p.Yes = append(p.Yes, voter)
@@ -88,79 +107,85 @@ func Vote(_ realm, pollID int, voter, choice string, now int64) string {
 	case "abstain":
 		p.Abstain = append(p.Abstain, voter)
 	default:
-		return "error: choice must be yes, no, or abstain"
+		panic("choice must be yes, no, or abstain")
 	}
-	return "vote recorded"
 }
 
-// GetResults returns a formatted string with vote counts for a poll.
-func GetResults(pollID int) string {
-	if pollID < 0 || pollID >= len(polls) {
-		return "error: poll not found"
-	}
-	p := polls[pollID]
-	total := len(p.Yes) + len(p.No) + len(p.Abstain)
-	return ufmt.Sprintf("poll %d: yes=%d no=%d abstain=%d total=%d closed=%v",
-		p.ID, len(p.Yes), len(p.No), len(p.Abstain), total, p.Closed)
-}
-
-// ClosePoll manually closes a poll, preventing further votes.
-// Only the poll creator may close it.
-func ClosePoll(_ realm, pollID int, caller string) string {
-	if pollID < 0 || pollID >= len(polls) {
-		return "error: poll not found"
-	}
-	p := polls[pollID]
-	if p.Creator != caller {
-		return "error: only the creator can close this poll"
+// ClosePoll stops a poll from accepting further votes. Only the creator
+// can close it.
+func ClosePoll(_ realm, pollID int) {
+	p := mustGetPoll(pollID)
+	if p.Creator != caller() {
+		panic("only the creator can close this poll")
 	}
 	if p.Closed {
-		return "error: poll is already closed"
+		panic("poll is already closed")
 	}
 	p.Closed = true
-	return ufmt.Sprintf("poll %d closed", p.ID)
 }
 
-// ListActivePolls returns a list of all open (non-closed) poll IDs and questions.
+// ---------- read-only queries ----------
+
+// GetResults returns a summary of a poll's votes.
+func GetResults(pollID int) string {
+	p := mustGetPoll(pollID)
+	total := len(p.Yes) + len(p.No) + len(p.Abstain)
+	status := "open"
+	if p.Closed {
+		status = "closed"
+	}
+
+	var b strings.Builder
+	b.WriteString("Poll #" + strconv.Itoa(p.ID) + " [" + status + "]\n")
+	b.WriteString("Question: " + p.Question + "\n")
+	b.WriteString("Creator: " + p.Creator + "\n")
+	b.WriteString("Yes: " + strconv.Itoa(len(p.Yes)) + "\n")
+	b.WriteString("No: " + strconv.Itoa(len(p.No)) + "\n")
+	b.WriteString("Abstain: " + strconv.Itoa(len(p.Abstain)) + "\n")
+	b.WriteString("Total: " + strconv.Itoa(total) + "\n")
+	return b.String()
+}
+
+// ListActivePolls returns IDs of all open polls.
 func ListActivePolls() string {
-	var sb strings.Builder
-	found := false
+	var ids []string
 	for _, p := range polls {
 		if !p.Closed {
-			sb.WriteString(ufmt.Sprintf("id=%d: %s (deadline=%s)\n",
-				p.ID, p.Question, strconv.FormatInt(p.Deadline, 10)))
-			found = true
+			ids = append(ids, strconv.Itoa(p.ID))
 		}
 	}
-	if !found {
-		return "no active polls"
+	if len(ids) == 0 {
+		return "none"
 	}
-	return sb.String()
+	return strings.Join(ids, ", ")
 }
 
-// Render returns a markdown-formatted summary of all polls.
-func Render(_ string) string {
-	var sb strings.Builder
-	sb.WriteString("# Snapshot Poll\n\n")
+// ---------- render ----------
+
+// Render returns a markdown overview. Never panics.
+func Render(path string) string {
 	if len(polls) == 0 {
-		sb.WriteString("No polls have been created yet.\n")
-		return sb.String()
+		return "# Snapshot Poll\n\nNo polls created.\n"
 	}
-	sb.WriteString("## All Polls\n\n")
+
+	var b strings.Builder
+	b.WriteString("# Snapshot Poll\n\n")
+	b.WriteString("**Total polls:** " + strconv.Itoa(len(polls)) + "\n\n")
+
 	for _, p := range polls {
 		status := "open"
 		if p.Closed {
 			status = "closed"
 		}
 		total := len(p.Yes) + len(p.No) + len(p.Abstain)
-		sb.WriteString(ufmt.Sprintf("### Poll #%d [%s]\n", p.ID, status))
-		sb.WriteString(ufmt.Sprintf("**Question:** %s\n\n", p.Question))
-		sb.WriteString(ufmt.Sprintf("**Creator:** %s\n\n", p.Creator))
-		sb.WriteString(ufmt.Sprintf("**Deadline (unix):** %s\n\n", strconv.FormatInt(p.Deadline, 10)))
-		sb.WriteString(ufmt.Sprintf("| Yes | No | Abstain | Total |\n"))
-		sb.WriteString("|-----|-----|---------|-------|\n")
-		sb.WriteString(ufmt.Sprintf("| %d | %d | %d | %d |\n\n",
-			len(p.Yes), len(p.No), len(p.Abstain), total))
+
+		b.WriteString("### Poll #" + strconv.Itoa(p.ID) + " [" + status + "]\n\n")
+		b.WriteString("**Question:** " + p.Question + "\n\n")
+		b.WriteString("**Creator:** `" + p.Creator + "`\n\n")
+		b.WriteString("| Yes | No | Abstain | Total |\n")
+		b.WriteString("|-----|-----|---------|-------|\n")
+		b.WriteString("| " + strconv.Itoa(len(p.Yes)) + " | " + strconv.Itoa(len(p.No)) +
+			" | " + strconv.Itoa(len(p.Abstain)) + " | " + strconv.Itoa(total) + " |\n\n")
 	}
-	return sb.String()
+	return b.String()
 }
